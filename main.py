@@ -48,7 +48,7 @@ def falling_alarm(image, bbox):
 def get_pose_model():
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print("device: ", device)
-    weigths = torch.load('yolov7-w6-pose.pt', map_location=device)
+    weigths = torch.load('yolov7-w6-pose.pt', map_location=device, weights_only=False)
     model = weigths['model']
     _ = model.float().eval()
     if torch.cuda.is_available():
@@ -93,25 +93,63 @@ def process_video(video_path):
         print('Error while trying to read video. Please check path again')
         return
 
+    # Get FPS from the video to compute timestamps
+    fps = vid_cap.get(cv2.CAP_PROP_FPS)
+    if fps == 0:
+        fps = 30  # Fallback to 30 if FPS is not available
+
     model, device = get_pose_model()
     vid_out = prepare_vid_out(video_path, vid_cap)
 
+    # Read all frames into a list
     success, frame = vid_cap.read()
     _frames = []
     while success:
         _frames.append(frame)
         success, frame = vid_cap.read()
 
-    for image in tqdm(_frames):
-        image, output = get_pose(image, model, device)
-        _image = prepare_image(image)
+    # Variables to track fall events
+    fall_event_active = False
+    fall_event_start = 0
+    fall_event_end = 0
+    fall_events = []  # List to store (start, end) times for fall events
+
+    # Process each frame with its index (to compute timestamp)
+    for frame_idx, image in enumerate(tqdm(_frames)):
+        current_time = frame_idx / fps  # Timestamp in seconds
+        image_tensor, output = get_pose(image, model, device)
+        _image = prepare_image(image_tensor)
         is_fall, bbox = fall_detection(output)
+        
         if is_fall:
+            # Start a new fall event if one isn't active already.
+            if not fall_event_active:
+                fall_event_active = True
+                fall_event_start = current_time
+            fall_event_end = current_time  # Update the end time continuously
             falling_alarm(_image, bbox)
+        else:
+            # If we were in a fall event, check its duration now that it has ended.
+            if fall_event_active:
+                duration = fall_event_end - fall_event_start
+                if duration >= 0.2:
+                    fall_events.append((fall_event_start, fall_event_end))
+                    print(f"Fall event detected from {fall_event_start:.2f} sec to {fall_event_end:.2f} sec")
+                # Reset the fall event flag
+                fall_event_active = False
+
         vid_out.write(_image)
+
+    # In case the video ends while a fall event is active:
+    if fall_event_active:
+        duration = fall_event_end - fall_event_start
+        if duration >= 0.2:
+            fall_events.append((fall_event_start, fall_event_end))
+            print(f"Fall event detected from {fall_event_start:.2f} sec to {fall_event_end:.2f} sec")
 
     vid_out.release()
     vid_cap.release()
+
 
 
 if __name__ == '__main__':
