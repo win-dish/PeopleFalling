@@ -90,7 +90,10 @@ def prepare_vid_out(video_path, vid_cap):
     return out
 
 def write_data_to_json(fall_start, fall_end, video, file):
-    event_info = f"Fall event detected from {fall_start:.2f} sec to {fall_end:.2f} sec"
+    event_entry = {
+        "action": "fall_detected",
+        "timestamp": fall_start,
+    }
 
     # Load existing data or initialize empty dict if file doesn't exist
     try:
@@ -99,8 +102,15 @@ def write_data_to_json(fall_start, fall_end, video, file):
     except (FileNotFoundError, json.JSONDecodeError):
         data = {}
 
-    # Add or update entry with filename as key
-    data[video] = event_info
+    if video in data:
+        if "actions" not in data[video]:
+            data[video]["actions"] = []
+        data[video]["actions"].append(event_entry)
+    else:
+        data[video] = {
+            "video_file": video,
+            "actions": [event_entry]
+        }
 
     # Write updated data back to the JSON file
     with open(file, "w") as f:
